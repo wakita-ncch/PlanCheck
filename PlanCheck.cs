@@ -28,6 +28,8 @@ using VMS.TPS.Common.Model.Types;
 //            If the HU value < -300, the warning message will pop-up.
 //         :  2015/06/08  by wakita
 //            Applicable to plan sum.
+//         :  2015/08/03
+//            Add the function to check the CT image used in plan is the latest.
 
 // Do not change namespace and class name
 // otherwise Eclipse will not be able to run the script.
@@ -145,6 +147,7 @@ namespace VMS.TPS
 
     public void Execute(ScriptContext context/*, Window window*/)
     {
+      Patient patient = context.Patient;
       PlanSetup planSetup = context.PlanSetup;
       PlanSum planSum = context.PlanSumsInScope.FirstOrDefault();
       if(planSetup == null && planSum == null)
@@ -153,7 +156,7 @@ namespace VMS.TPS
       }
       else if(planSetup != null)
       {
-	CheckPlan(planSetup, false);
+	CheckPlan(patient, planSetup, false);
       }
       else if(planSetup == null && planSum != null) 
       {
@@ -162,20 +165,26 @@ namespace VMS.TPS
 	planSumWindow.Title = "Select PlanSum";
 	planSumWindow.SizeToContent = SizeToContent.WidthAndHeight;
 	planSumWindow.WindowStartupLocation = WindowStartupLocation.CenterScreen;
-	InitializeUI(planSumWindow, context.PlanSumsInScope);
+	InitializeUI(planSumWindow, context.PlanSumsInScope, patient);
       }
     }
 
-    private void CheckPlan(PlanSetup planSetup, bool IsPlanSum)
+    private void CheckPlan(Patient patient, PlanSetup planSetup, bool IsPlanSum)
     {
       // If there's no selected plan with calculated dose throw an exception
       if (planSetup == null || planSetup.Dose == null)
+      {
+	if(IsPlanSum) planSumWindow.Close();
 	throw new ApplicationException("*************ERROR*************\nThis plan has not been calculated!!!\n*******************************");
+      }
 
       // Retrieve StructureSet
       StructureSet structureSet = planSetup.StructureSet;
       if (structureSet == null)
+      {
+	if(IsPlanSum) planSumWindow.Close();
 	throw new ApplicationException("*************ERROR*************\nThe selected plan does not reference a StructureSet.\n*******************************");
+      }
 
       // Retrieve image
       VMS.TPS.Common.Model.API.Image image = structureSet.Image;
@@ -184,6 +193,7 @@ namespace VMS.TPS
       List<Pair> results = new List<Pair>();
 
       // Flags
+      bool fIsCTLatest = true;
       bool fWithCouch = false;
       bool fMinY = false;
       bool fMaxY = false;
@@ -233,9 +243,15 @@ namespace VMS.TPS
       double frdose1 = fr1.PrescribedDosePerFraction.Dose;
 
       if (!NoF1.HasValue)
+      {
+	if(IsPlanSum) planSumWindow.Close();
 	throw new ApplicationException("*************ERROR*************\nInput Number of Fractions!!!\n*******************************");
+      }
       if (Double.IsNaN(frdose1))
+      {
+	if(IsPlanSum) planSumWindow.Close();
 	throw new ApplicationException("*************ERROR*************\nInput Dose/Fraction!!!\n*******************************");
+      }
 
       // Check CT origin
       if(!((image.UserOrigin.x==0) && (image.UserOrigin.y==0) && (image.UserOrigin.z==0))){
@@ -246,6 +262,25 @@ namespace VMS.TPS
       // Check CT creation date
       var creation = (DateTime)image.Series.Study.CreationDateTime;
       results.Add(new Pair(string.Format("CT creation date is...\n{0}/{1}/{2}", creation.Year, creation.Month, creation.Day),"NORMAL"));
+
+      // Check CT image used in this plan is the latest
+      var AllStructureSets = patient.StructureSets;
+      DateTime datetime = DateTime.Now;
+      foreach(var ss in AllStructureSets)
+      {
+	datetime = (DateTime)ss.Image.Series.Study.CreationDateTime;
+	if(datetime > creation && ss.Image.Series.ImagingDeviceId != "" && ss.Image.Series.Study.Comment != "ARIA RadOnc Study")
+	{
+	  if(!(datetime.Year == creation.Year && datetime.Month == creation.Month && datetime.Day == creation.Day))
+	  {
+	    fIsCTLatest = false;
+	    fAllOK = false;
+	  }
+	}
+      }
+      if(!fIsCTLatest)
+	results.Add(new Pair("***********WARNING************\nPlanning CT image is not latest!!\n*******************************", "ERROR"));
+
 
 
       // Check CT to RED table
@@ -276,7 +311,10 @@ namespace VMS.TPS
       else if(planType == 3) fIsVMAT = true;
 
       if(fIsElectron && numberOfBeams > 1)
+      {
+	if(IsPlanSum) planSumWindow.Close();
 	throw new ApplicationException("*************ERROR*************\nOnly 1 field is allowed in electron plan!!!\n*******************************");
+      }
       if(fIsElectron && weight != 1.0)
 	results.Add(new Pair("***********WARNING************\nField weight is not 1.0\nin electron plan!!!\n*******************************", "ERROR"));
       if(fIsElectron && n_method.IndexOf("No plan") < 0)
@@ -353,9 +391,11 @@ namespace VMS.TPS
 	if(!fWithCouch && !fIsElectron){
 	  results.Add(new Pair(string.Format("***********WARNING************\nNo Couch Structures!!!\n*******************************"), "ERROR"));
 	  fAllOK = false;
-	  }else{
-	    results.Add(new Pair(string.Format("x coordinate of Couch center is {0:f1} cm", couchcenter), "NORMAL"));
-	  }
+	}
+	else if(!fIsElectron)
+	{
+	  results.Add(new Pair(string.Format("x coordinate of Couch center is {0:f1} cm", couchcenter), "NORMAL"));
+	}
       }else{
 	results.Add(new Pair(string.Format("Unknown treatment machine."), "ERROR"));
       }
@@ -479,6 +519,16 @@ namespace VMS.TPS
 		results.Add(new Pair(string.Format("***********WARNING************\nDose Rate is {0} MU/min!!\n*******************************", doseRate), "ERROR"));
 		fField = false;
 	      }
+	    }else if(beam.EnergyModeDisplayName == "6X-FFF"){
+	      if(doseRate != 1400) {
+		results.Add(new Pair(string.Format("***********WARNING************\nDose Rate is {0} MU/min!!\n*******************************", doseRate), "ERROR"));
+		fField = false;
+	      }
+	    }else if(beam.EnergyModeDisplayName == "10X-FFF"){
+	      if(doseRate != 2400) {
+		results.Add(new Pair(string.Format("***********WARNING************\nDose Rate is {0} MU/min!!\n*******************************", doseRate), "ERROR"));
+		fField = false;
+	      }
 	    }else{
 	      if(doseRate != 600) {
 		results.Add(new Pair(string.Format("***********WARNING************\nDose Rate is {0} MU/min!!\n*******************************", doseRate), "ERROR"));
@@ -565,15 +615,27 @@ namespace VMS.TPS
 	}
       }
       if (!fHasRefPoint)
+      {
+	if(IsPlanSum) planSumWindow.Close();
 	throw new ApplicationException("************WARNING************\nThis plan has no reference points!!\n*******************************\n\n");
+      }
       if (!fHasPrimaryRP) 
+      {
+	if(IsPlanSum) planSumWindow.Close();
 	throw new ApplicationException("************WARNING************\nThis plan has no Primary Reference Point!!\n*******************************\n\n");
+      }
       if (VVector.Distance(refPointLocation, planSetup.PlanNormalizationPoint) > 0.01 && !fIsVMAT && !fIsIMRT) 
+      {
+	if(IsPlanSum) planSumWindow.Close();
 	throw new ApplicationException("************WARNING************\nPrimary Reference Point is not\nNormalization point!!\n*******************************\n\n");
+      }
 
       // Calculate the distance of isocenter and Primary reference point
       if (Double.IsNaN(refPointLocation.x) && !fIsElectron && !fIsVMAT && !fIsIMRT && !fIsSBRT){ 
+      {
+	if(IsPlanSum) planSumWindow.Close();
 	throw new ApplicationException("************WARNING************\nPrimary Reference Point has no location!!\n*******************************\n\n");
+      }
 //	fAllOK = false;
       }else if (VVector.Distance(isocenter, refPointLocation) > 0.1 && !fIsElectron && !fIsVMAT && !fIsIMRT){
 	results.Add(new Pair("***********WARNING************\nIsocenter and Primary reference point\nare not the same!!\n*******************************", "ERROR"));
@@ -753,10 +815,12 @@ namespace VMS.TPS
     }
 
     PlanSum selectedPlanSum { get; set; }
+    Patient selectedPatient { get; set; }
     ComboBox planSumCombo = new ComboBox();
 
-    private void InitializeUI(Window window, IEnumerable<PlanSum> planSumsInScope)
+    private void InitializeUI(Window window, IEnumerable<PlanSum> planSumsInScope, Patient patient)
     {
+      selectedPatient = patient;
       
       var panel = new StackPanel();
       panel.Orientation = Orientation.Vertical;
@@ -824,9 +888,10 @@ namespace VMS.TPS
       {
 	foreach(PlanSetup planSetup in selectedPlanSum.PlanSetups)
 	{
-	  CheckPlan(planSetup, true);
+	  CheckPlan(selectedPatient, planSetup, true);
 	  System.Threading.Thread.Sleep(50);
 	}
+
 	planSumWindow.Close();
       }
     }
