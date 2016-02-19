@@ -28,8 +28,10 @@ using VMS.TPS.Common.Model.Types;
 //            If the HU value < -300, the warning message will pop-up.
 //         :  2015/06/08  by wakita
 //            Applicable to plan sum.
-//         :  2015/08/03
+//         :  2015/08/03  by wakita
 //            Add the function to check the CT image used in plan is the latest.
+//         :  2016/02/19 by wakita
+//            Change UI for checking PlanSum to be able to select Course ID.
 
 // Do not change namespace and class name
 // otherwise Eclipse will not be able to run the script.
@@ -165,7 +167,7 @@ namespace VMS.TPS
 	planSumWindow.Title = "Select PlanSum";
 	planSumWindow.SizeToContent = SizeToContent.WidthAndHeight;
 	planSumWindow.WindowStartupLocation = WindowStartupLocation.CenterScreen;
-	InitializeUI(planSumWindow, context.PlanSumsInScope, patient);
+	InitializeUI(planSumWindow, patient);
       }
     }
 
@@ -251,6 +253,18 @@ namespace VMS.TPS
       {
 	if(IsPlanSum) planSumWindow.Close();
 	throw new ApplicationException("*************ERROR*************\nInput Dose/Fraction!!!\n*******************************");
+      }
+
+      if (NoF1>49)
+      {
+	results.Add(new Pair("***********WARNING************\nNumber of fraction is too many!!\n*******************************", "ERROR"));
+	fAllOK = false;
+      }
+
+      if (frdose1<100)
+      {
+	results.Add(new Pair("***********WARNING************\nDose per fraction is too small!!\n*******************************", "ERROR"));
+	fAllOK = false;
       }
 
       // Check CT origin
@@ -816,9 +830,11 @@ namespace VMS.TPS
 
     PlanSum selectedPlanSum { get; set; }
     Patient selectedPatient { get; set; }
+    Course selectedCourse { get; set; }
     ComboBox planSumCombo = new ComboBox();
+    ComboBox courseCombo = new ComboBox();
 
-    private void InitializeUI(Window window, IEnumerable<PlanSum> planSumsInScope, Patient patient)
+    private void InitializeUI(Window window, Patient patient)
     {
       selectedPatient = patient;
       
@@ -830,10 +846,31 @@ namespace VMS.TPS
       label.FontSize = 15;
       panel.Children.Add(label);
 
-      planSumCombo.ItemsSource = planSumsInScope;
-      planSumCombo.SelectedItem = planSumsInScope.FirstOrDefault();
+      var label2 = new Label();
+      label2.Content = "Course ID";
+      label2.FontSize = 15;
+      panel.Children.Add(label2);
+
+      courseCombo.ItemsSource = patient.Courses.Where(c=>c.PlanSums.Count()>0).OrderByDescending(c=>c.PlanSums.Count())
+          .ThenByDescending(c=>c.HistoryDateTime);
+      courseCombo.SelectedItem = patient.Courses.Where(c => c.PlanSums.Count() > 0).OrderBy(c=>c.HistoryDateTime).Last();
+      courseCombo.MinWidth = 100;
+      courseCombo.Margin = new Thickness(10, 0, 10, 0);
+      courseCombo.FontSize = 15;
+      courseCombo.SelectionChanged += new SelectionChangedEventHandler(Item_Changed);
+      panel.Children.Add(courseCombo);
+
+      var label3 = new Label();
+      label3.Content = "Plan Sum ID";
+      label3.FontSize = 15;
+      panel.Children.Add(label3);
+
+      planSumCombo.ItemsSource = patient.Courses.Where(c => c.PlanSums.Count() > 0)
+          .OrderBy(c => c.HistoryDateTime).Last().PlanSums;
+      planSumCombo.SelectedItem = patient.Courses.Where(c => c.PlanSums.Count() > 0)
+          .OrderBy(c => c.HistoryDateTime).Last().PlanSums.FirstOrDefault();
       planSumCombo.MinWidth = 100;
-      planSumCombo.Margin = new Thickness(10, 10, 10, 15);
+      planSumCombo.Margin = new Thickness(10, 0, 10, 15);
       planSumCombo.FontSize = 15;
       panel.Children.Add(planSumCombo);
 
@@ -870,6 +907,13 @@ namespace VMS.TPS
       window.Content = panel;
 
       window.ShowDialog();
+    }
+
+    private void Item_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        selectedCourse = courseCombo.SelectedItem as Course;
+        planSumCombo.ItemsSource = selectedCourse.PlanSums;
+        planSumCombo.SelectedItem = selectedCourse.PlanSums.FirstOrDefault();
     }
 
     private void Button_click(object sender, RoutedEventArgs e)
