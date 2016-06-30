@@ -32,6 +32,12 @@ using VMS.TPS.Common.Model.Types;
 //            Add the function to check the CT image used in plan is the latest.
 //         :  2016/02/19 by wakita
 //            Change UI for checking PlanSum to be able to select Course ID.
+//         :  2016/03/08 by wakita
+//            Add checking if the prescribed dose and the Primary Ref Point dose are the same.
+//         :  2016/06/24 by wakita
+//            Add Print button to print plan report using external vbs script.
+//         :  2016/06/29 by wakita
+//            Add checking if the field weight is not zero.
 
 // Do not change namespace and class name
 // otherwise Eclipse will not be able to run the script.
@@ -497,6 +503,12 @@ namespace VMS.TPS
 	      }
 	    }
 
+	    // Check field weight
+	    if(beam.WeightFactor == 0.0) {
+	      results.Add(new Pair(string.Format("***********WARNING************\n{0} has 0 MU!!\n*******************************", beam.Id), "ERROR"));
+	      fField = false;
+	    }
+
 	    if(fField) results.Add(new Pair("ok.", "HEAD"));
 	    else fAllOK = false;
 
@@ -514,6 +526,13 @@ namespace VMS.TPS
 		fField = false;
 	      }
 	    }
+
+	    // Check field weight
+	    if(beam.WeightFactor == 0.0) {
+	      results.Add(new Pair(string.Format("***********WARNING************\n{0} has 0 MU!!\n*******************************", beam.Id), "ERROR"));
+	      fField = false;
+	    }
+
 	    if(fField) results.Add(new Pair(string.Format("ok. {0} has no MLC.", beam.Id), "HEAD"));
 	    else fAllOK = false;
 	  }else if(beam.MLC == null && fIsElectron){  /* If the field is electron. */
@@ -523,6 +542,13 @@ namespace VMS.TPS
 	      results.Add(new Pair(string.Format("***********WARNING************\nDose Rate is {0} MU/min!!\n*******************************", doseRate),"ERROR"));
 	      fField = false;
 	    }
+
+	    // Check field weight
+	    if(beam.WeightFactor == 0.0) {
+	      results.Add(new Pair(string.Format("***********WARNING************\n{0} has 0 MU!!\n*******************************", beam.Id), "ERROR"));
+	      fField = false;
+	    }
+
 	    if(fField) results.Add(new Pair(string.Format("ok. {0} is Electron.", beam.Id), "HEAD"));
 	    else fAllOK = false;
 	  }else if(fIsVMAT){ // If the plan is VMAT.
@@ -643,6 +669,11 @@ namespace VMS.TPS
 	if(IsPlanSum) planSumWindow.Close();
 	throw new ApplicationException("************WARNING************\nPrimary Reference Point is not\nNormalization point!!\n*******************************\n\n");
       }
+      if (Math.Abs(fr1.DosePerFractionInPrimaryRefPoint.Dose-frdose1)>1e-5 && !fIsVMAT && !fIsIMRT && !fIsSBRT && !fIsElectron)
+      {
+	results.Add(new Pair("***********WARNING************\nCheck Plan Normalization Mode!!\n*******************************", "ERROR"));
+	fAllOK = false;
+      }
 
       // Calculate the distance of isocenter and Primary reference point
       if (Double.IsNaN(refPointLocation.x) && !fIsElectron && !fIsVMAT && !fIsIMRT && !fIsSBRT){ 
@@ -738,10 +769,99 @@ namespace VMS.TPS
       if (fAllOK) results.Add(new Pair("This plan is probably OK.", "NORMAL"));
 
 //      MessageBox.Show(message, "Plan parameter check of " + planSetup.Id);
-      ReportResults(results, planSetup.Id);
+      if(!IsPlanSum)
+	ReportResults(results, planSetup.Id);
+      else
+	ReportSumResults(results, planSetup.Id);
     }
 
+    Window ResultsWindow = new Window();
+
     private void ReportResults(List<Pair> results, string planId)
+    {
+//      var window = new Window();
+      var scrollView = new ScrollViewer();
+      scrollView.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
+      scrollView.HorizontalScrollBarVisibility = ScrollBarVisibility.Auto;
+      var panel = new StackPanel();
+      panel.Orientation = Orientation.Vertical;
+      panel.Background = Brushes.AliceBlue;
+
+      var header = new Label();
+      header.Content = "";
+      header.Margin = new Thickness(0,0,0,-15);
+      panel.Children.Add(header);
+
+      var grid = new Grid();
+      grid.ColumnDefinitions.Add(new ColumnDefinition());
+
+      // Add results
+      var counter = 0;
+      foreach (var item in results)
+      {
+	AddRow((item.Message).Replace("_","__"), item.Type, counter, grid);
+	counter++;
+      }
+
+      panel.Children.Add(grid);
+
+      var footer = new Label();
+      footer.Content = "";
+      panel.Children.Add(footer);
+
+      var grid2 = new Grid();
+      grid2.RowDefinitions.Add(new RowDefinition());
+
+      var OKbutton = new Button();
+      OKbutton.Content = "Cancel";
+      OKbutton.FontSize = 15;
+      OKbutton.IsCancel = true;
+      OKbutton.IsDefault = true;
+      //      OKbutton.HorizontalAlignment = HorizontalAlignment.Right;
+      OKbutton.Margin = new Thickness(0,10,0,10);
+      OKbutton.Width = 80;
+      OKbutton.Height = 25;
+
+      var Printbutton = new Button();
+      Printbutton.Content = "Print";
+      Printbutton.FontSize = 15;
+      Printbutton.HorizontalAlignment = HorizontalAlignment.Right;
+      Printbutton.Margin = new Thickness(0,10,0,10);
+      Printbutton.Width = 80;
+      Printbutton.Height = 25;
+      Printbutton.Click += new RoutedEventHandler(Print_click);
+
+      var space = new Label();
+      space.Content = null;
+
+      grid2.ColumnDefinitions.Add(new ColumnDefinition());
+      grid2.Children.Add(space);
+      space.SetValue(Grid.RowProperty, 0);
+      space.SetValue(Grid.ColumnProperty,0);
+      grid2.ColumnDefinitions.Add(new ColumnDefinition());
+      grid2.Children.Add(OKbutton);
+      OKbutton.SetValue(Grid.RowProperty, 0);
+      OKbutton.SetValue(Grid.ColumnProperty,2);
+      grid2.ColumnDefinitions.Add(new ColumnDefinition());
+      grid2.Children.Add(Printbutton);
+      Printbutton.SetValue(Grid.RowProperty, 0);
+      Printbutton.SetValue(Grid.ColumnProperty,1);
+
+      panel.Children.Add(grid2);
+
+      scrollView.Content = panel;
+
+      ResultsWindow.Content = scrollView;
+      ResultsWindow.Title = "Plan Parameter Check of " + planId;
+      ResultsWindow.SizeToContent = SizeToContent.WidthAndHeight;
+//      window.Height = 900;
+      ResultsWindow.MinWidth = 300;
+      ResultsWindow.MaxHeight = 1000;
+      ResultsWindow.WindowStartupLocation = WindowStartupLocation.CenterScreen;
+      ResultsWindow.ShowDialog();
+    }
+
+    private void ReportSumResults(List<Pair> results, string planId)
     {
       var window = new Window();
       var scrollView = new ScrollViewer();
@@ -775,7 +895,7 @@ namespace VMS.TPS
 
       var OKbutton = new Button();
       OKbutton.Content = "OK";
- //     OKbutton.FontSize = 14;
+      OKbutton.FontSize = 15;
       OKbutton.IsCancel = true;
       OKbutton.IsDefault = true;
       OKbutton.HorizontalAlignment = HorizontalAlignment.Right;
@@ -784,7 +904,7 @@ namespace VMS.TPS
       OKbutton.Height = 25;
 
       panel.Children.Add(OKbutton);
-      
+
       scrollView.Content = panel;
 
       window.Content = scrollView;
@@ -877,14 +997,15 @@ namespace VMS.TPS
       var subpanel = new StackPanel();
       subpanel.Orientation = Orientation.Horizontal;
 
-      var nulllabel = new Label();
-      nulllabel.Content = "     ";
-      nulllabel.Margin = new Thickness(10, 0, 30, 0);
-      subpanel.Children.Add(nulllabel);
+//      var nulllabel = new Label();
+//      nulllabel.Content = " ";
+//      nulllabel.Margin = new Thickness(0, 0, 30, 0);
+//      subpanel.Children.Add(nulllabel);
 
       var analyzeButton = new Button();
       analyzeButton.Content = "Check";
       analyzeButton.FontSize = 15;
+      analyzeButton.Margin = new Thickness(10, 0, 0, 0);
       analyzeButton.Click += new RoutedEventHandler(Button_click);
       analyzeButton.IsDefault = true;
       analyzeButton.Width = 60;
@@ -894,11 +1015,23 @@ namespace VMS.TPS
       nulllabel2.Content = " ";
       subpanel.Children.Add(nulllabel2);
 
+      var PrintButton = new Button();
+      PrintButton.Content = "Print";
+      PrintButton.FontSize = 15;
+      PrintButton.Width = 60;
+      PrintButton.Click += new RoutedEventHandler(PrintSum_click);
+      subpanel.Children.Add(PrintButton);
+
+      var nulllabel3 = new Label();
+      nulllabel3.Content = " ";
+      subpanel.Children.Add(nulllabel3);
+
       var cancelButton = new Button();
       cancelButton.Content = "Cancel";
       cancelButton.FontSize = 15;
       cancelButton.IsCancel = true;
       cancelButton.Width = 60;
+      cancelButton.Margin = new Thickness(0, 0, 10, 0);
       subpanel.Children.Add(cancelButton);
 
       panel.Children.Add(subpanel);
@@ -936,8 +1069,20 @@ namespace VMS.TPS
 	  System.Threading.Thread.Sleep(50);
 	}
 
-	planSumWindow.Close();
+//	planSumWindow.Close();
       }
+    }
+
+    private void PrintSum_click(object sender, RoutedEventArgs e)
+    {
+      planSumWindow.Close();
+      System.Diagnostics.Process.Start(@"\\172.16.212.128\Radiology-NAS\05.Software\EclipseScript\sendkey.vbs");
+    }
+
+    private void Print_click(object sender, RoutedEventArgs e)
+    {
+      ResultsWindow.Close();
+      System.Diagnostics.Process.Start(@"\\172.16.212.128\Radiology-NAS\05.Software\EclipseScript\sendkey.vbs");
     }
   }
 }
