@@ -38,6 +38,10 @@ using VMS.TPS.Common.Model.Types;
 //            Add Print button to print plan report using external vbs script.
 //         :  2016/06/29 by wakita
 //            Add checking if the field weight is not zero.
+//         :  2016/10/20 by wakita
+//            Add checking if patient orientation is Head First Supine.
+//         :  2017/02/13 by wakita
+//            Add the function to check the ID of CT image contains the correct date in a format of "YYMMDD".
 
 // Do not change namespace and class name
 // otherwise Eclipse will not be able to run the script.
@@ -218,6 +222,14 @@ namespace VMS.TPS
       bool fIsSBRT = false;
       bool fVolumePre = false;
 
+      // Check Patient Orientation
+      PatientOrientation patientOrientation = planSetup.TreatmentOrientation;
+      if((int)patientOrientation != 1)
+      {
+	results.Add(new Pair("***********WARNING************\nOrientation is not Head First Supine!\n*******************************", "ERROR"));
+	fAllOK = false;
+      }
+
       // Check course ID and plan ID
       string expression1 = "^Course(?<number>[0-9]{1,2}$)";
       Regex reg1 = new Regex(expression1);
@@ -281,7 +293,13 @@ namespace VMS.TPS
 
       // Check CT creation date
       var creation = (DateTime)image.Series.Study.CreationDateTime;
-      results.Add(new Pair(string.Format("CT creation date is...\n{0}/{1}/{2}", creation.Year, creation.Month, creation.Day),"NORMAL"));
+      var ctdate = creation.ToString("yyyyMMdd").Substring(2);
+      if(image.Id.IndexOf(ctdate) < 0){
+	results.Add(new Pair("***********WARNING************\nID of CT image dose not contain the\ncorrect date in a format of \"YYMMDD\".\n*******************************", "ERROR"));
+	fAllOK = false;
+      }else{
+	results.Add(new Pair(string.Format("CT creation date is...\n{0}/{1}/{2}", creation.Year, creation.Month, creation.Day),"NORMAL"));
+      }
 
       // Check CT image used in this plan is the latest
       var AllStructureSets = patient.StructureSets;
@@ -988,7 +1006,7 @@ namespace VMS.TPS
       planSumCombo.ItemsSource = patient.Courses.Where(c => c.PlanSums.Count() > 0)
           .OrderBy(c => c.HistoryDateTime).Last().PlanSums;
       planSumCombo.SelectedItem = patient.Courses.Where(c => c.PlanSums.Count() > 0)
-          .OrderBy(c => c.HistoryDateTime).Last().PlanSums.FirstOrDefault();
+          .OrderBy(c => c.HistoryDateTime).Last().PlanSums.Last();
       planSumCombo.MinWidth = 100;
       planSumCombo.Margin = new Thickness(10, 0, 10, 15);
       planSumCombo.FontSize = 15;
@@ -1076,13 +1094,13 @@ namespace VMS.TPS
     private void PrintSum_click(object sender, RoutedEventArgs e)
     {
       planSumWindow.Close();
-      System.Diagnostics.Process.Start(@"\\172.16.212.128\Radiology-NAS\05.Software\EclipseScript\sendkey.vbs");
+      System.Diagnostics.Process.Start(@"\\172.16.212.128\Radiology-NAS\05_Software\EclipseScript\sendkey.vbs");
     }
 
     private void Print_click(object sender, RoutedEventArgs e)
     {
       ResultsWindow.Close();
-      System.Diagnostics.Process.Start(@"\\172.16.212.128\Radiology-NAS\05.Software\EclipseScript\sendkey.vbs");
+      System.Diagnostics.Process.Start(@"\\172.16.212.128\Radiology-NAS\05_Software\EclipseScript\sendkey.vbs");
     }
   }
 }
